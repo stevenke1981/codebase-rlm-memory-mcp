@@ -1,5 +1,6 @@
 pub mod error;
 pub mod git_util;
+pub mod hooks;
 pub mod index;
 pub mod models;
 pub mod paths;

@@ -24,6 +24,7 @@ MCP server: **`codebase-rlm-memory-mcp`** · binary: **`cbrlm`** · abbrev: **CB
 
 1. `codebase-rlm-memory-mcp` MCP server enabled (`cbrlm` binary)
 2. Project indexed via `index_repository`
+3. (Optional) Hooks installed via `install.ps1` / `install.sh` — SessionStart reminder + PreToolUse graph augment on Grep/Glob
 
 **Project naming:** shares `~/.cache/codebase-memory-mcp` with upstream CBM, but CBRLM indexes use **`cbrlm+` prefix** (e.g. upstream `D-animejs-skills` → CBRLM `cbrlm+D-animejs-skills`). Pass either form; `cbrlm+` is added automatically.
 
@@ -73,6 +74,15 @@ get_architecture(project)
 | Trace calls | `trace_path` |
 | Scan logs/CSV | `rlm_scan` / `rlm_peek` / `rlm_chunk` |
 | Workflow help | `rlm_workflow` |
+
+## Hooks (if installed)
+
+| Event | Matcher | Effect |
+|-------|---------|--------|
+| SessionStart | startup/resume/clear/compact | Remind: graph tools first, `cbrlm+` names, `index_repository` if needed |
+| PreToolUse | Grep\|Glob | Non-blocking `search_graph` augment via `cbrlm hook-augment` |
+
+Hooks never block tool calls. Read is intentionally excluded from PreToolUse (preserve read-before-edit).
 
 ## Rules
 

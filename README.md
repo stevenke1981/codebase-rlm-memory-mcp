@@ -66,6 +66,7 @@ cd codebase-rlm-memory-mcp
 2. 安裝到 `~/.config/opencode-cbrlm/bin/cbrlm.exe`
 3. 寫入 OpenCode / Codex MCP 設定
 4. 安裝 `rlm` skill
+5. 安裝 **hooks**（對齊上游 CBM 的 SessionStart + PreToolUse 模式）
 
 **手動編譯：**
 
@@ -129,12 +130,44 @@ CBRLM_PROJECT_PREFIX = "cbrlm+"
 }
 ```
 
+### Hooks / 代理 hooks（v0.1.2+）
+
+與上游 [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) 相同模式：**不阻擋工具**，只在背景注入結構化提示。
+
+| Agent | Hook | 行為 |
+|-------|------|------|
+| **Codex** | `SessionStart` | 提醒優先用 `search_graph` / `rlm_filter` / `trace_path`；專案名 `cbrlm+` 前綴 |
+| **Claude Code** | `SessionStart` | 同上（`cbrlm-session-reminder` 腳本） |
+| **Claude Code** | `PreToolUse` (`Grep\|Glob`) | 從 pattern 抽 token → `search_graph` → 注入 `additionalContext`（**永不阻擋**） |
+
+CLI 子命令（供 hook 腳本呼叫）：
+
+```bash
+cbrlm hook-session-start   # stdout 印出提醒文字
+cbrlm hook-augment         # stdin 讀 PreToolUse JSON，stdout 輸出 additionalContext
+```
+
+腳本安裝位置：
+- `~/.claude/hooks/cbrlm-code-discovery-gate`（+ `.ps1` 版）
+- `~/.config/opencode-cbrlm/hooks/`（備份副本）
+
+Codex `config.toml` 使用 sentinel 區塊（可重複 upsert）：
+
+```toml
+# >>> codebase-rlm-memory-mcp SessionStart >>>
+[[hooks.SessionStart]]
+matcher = "startup|resume|clear|compact"
+...
+# <<< codebase-rlm-memory-mcp SessionStart <<<
+```
+
 ### Environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `CBM_CACHE_DIR` | `~/.cache/codebase-memory-mcp` | 圖譜 DB 儲存目錄（與上游共用） |
 | `CBRLM_PROJECT_PREFIX` | `cbrlm+` | CBRLM 專案名稱前綴 |
+| `CBRLM_BIN` | （hook 腳本內建） | 覆寫 `cbrlm` 二進位路徑 |
 
 ### Performance / 效能
 
