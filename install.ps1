@@ -270,12 +270,14 @@ command = "$codexBinary"
 
 [mcp_servers.$McpServerName.env]
 CBRLM_PROJECT_PREFIX = "cbrlm+"
+
 "@
     if ($toml -match "\[mcp_servers\.$([regex]::Escape($McpServerName))\]") {
-        $toml = $toml -replace "(?s)\[mcp_servers\.$([regex]::Escape($McpServerName))\][^\[]*", "$newBlock"
+        $toml = $toml -replace "(?s)\[mcp_servers\.$([regex]::Escape($McpServerName))\](?:\r?\n(?!\[mcp_servers\.)).*?(?=\r?\n\[|\z)", $newBlock.TrimEnd()
     } else {
         $toml = $toml.TrimEnd() + "`n`n$newBlock"
     }
+    if (-not $toml.EndsWith("`n")) { $toml += "`n" }
     Set-Content $codexConfig $toml -Encoding UTF8 -NoNewline
     Write-Host "  ✓ Updated Codex MCP in $codexConfig" -ForegroundColor Green
     Update-CodexSessionHooks $codexConfig
