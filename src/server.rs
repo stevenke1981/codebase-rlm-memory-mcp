@@ -9,6 +9,7 @@ use rmcp::{
 
 use crate::git_util::detect_changed_files;
 use crate::index::{default_project_name, Indexer};
+use crate::paths::{resolve_project_name, upstream_alias, upstream_project_key};
 use crate::rlm::RlmSessionStore;
 use crate::store::{delete_project, list_projects, project_exists, Store};
 
@@ -173,8 +174,10 @@ fn json_err(msg: impl std::fmt::Display) -> String {
     json_ok(serde_json::json!({ "error": msg.to_string() }))
 }
 
-fn open_store(project: &str) -> Result<Store, String> {
-    Store::open(project).map_err(|e| e.to_string())
+fn resolve_and_open(project: &str) -> Result<(String, Store), String> {
+    let resolved = resolve_project_name(project);
+    let store = Store::open(&resolved).map_err(|e| e.to_string())?;
+    Ok((resolved, store))
 }
 
 #[tool_router]
@@ -188,21 +191,26 @@ impl CbmRlmServer {
             }));
         }
         let repo = Path::new(&args.repo_path);
-        let project = args
-            .project
-            .unwrap_or_else(|| default_project_name(repo));
-        let Ok(store) = open_store(&project) else {
+        let project = match args.project.as_deref() {
+            Some(p) => resolve_project_name(p),
+            None => default_project_name(repo),
+        };
+        let upstream = upstream_project_key(repo);
+        let Ok(store) = Store::open(&project).map_err(|e| e.to_string()) else {
             return json_err("failed to open store");
         };
         match Indexer::index_repo(&store, repo) {
             Ok(count) => match store.summary() {
                 Ok(summary) => json_ok(serde_json::json!({
                     "project": project,
+                    "upstream_project": upstream,
+                    "upstream_alias": upstream_alias(&project),
                     "mode": args.mode.unwrap_or_else(|| "full".into()),
                     "persistence": args.persistence.unwrap_or(false),
                     "symbols_indexed": count,
                     "summary": summary,
                     "engine": "codebase-memory-rlm-rs",
+                    "note": "Rust index uses rs+ prefixed project names; upstream CBM uses upstream_project"
                 })),
                 Err(e) => json_err(e),
             },
@@ -212,11 +220,25 @@ impl CbmRlmServer {
 
     #[tool(description = "Check index status for a project.")]
     fn index_status(&self, Parameters(args): Parameters<ProjectArgs>) -> String {
-        if !project_exists(&args.project) {
-            return json_ok(serde_json::json!({ "project": args.project, "indexed": false }));
+        let project = resolve_project_name(&args.project);
+        if !project_exists(&project) {
+            return json_ok(serde_json::json!({
+                "project": project,
+                "requested": args.project,
+                "indexed": false,
+                "hint": "Rust projects use rs+ prefix; pass upstream name or rs+name"
+            }));
         }
-        match open_store(&args.project).and_then(|s| s.summary().map_err(|e| e.to_string())) {
-            Ok(summary) => json_ok(serde_json::json!({ "indexed": true, "summary": summary })),
+        match Store::open(&project) {
+            Ok(store) => match store.summary() {
+                Ok(summary) => json_ok(serde_json::json!({
+                    "project": project,
+                    "upstream_alias": upstream_alias(&project),
+                    "indexed": true,
+                    "summary": summary
+                })),
+                Err(e) => json_err(e),
+            },
             Err(e) => json_err(e),
         }
     }
@@ -231,15 +253,16 @@ impl CbmRlmServer {
 
     #[tool(description = "Delete a project index.")]
     fn delete_project(&self, Parameters(args): Parameters<ProjectArgs>) -> String {
-        match delete_project(&args.project) {
-            Ok(()) => json_ok(serde_json::json!({ "deleted": args.project })),
+        let project = resolve_project_name(&args.project);
+        match delete_project(&project) {
+            Ok(()) => json_ok(serde_json::json!({ "deleted": project })),
             Err(e) => json_err(e),
         }
     }
 
     #[tool(description = "Search the code knowledge graph.")]
     fn search_graph(&self, Parameters(args): Parameters<SearchGraphArgs>) -> String {
-        let Ok(store) = open_store(&args.project) else {
+        let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
         match store.search_graph(
@@ -255,7 +278,7 @@ impl CbmRlmServer {
 
     #[tool(description = "Graph-augmented code search. Modes: compact, files.")]
     fn search_code(&self, Parameters(args): Parameters<SearchCodeArgs>) -> String {
-        let Ok(store) = open_store(&args.project) else {
+        let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
         if args.mode == "files" {
@@ -280,7 +303,7 @@ impl CbmRlmServer {
 
     #[tool(description = "Read source code for a symbol.")]
     fn get_code_snippet(&self, Parameters(args): Parameters<SnippetArgs>) -> String {
-        let Ok(store) = open_store(&args.project) else {
+        let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
         match store.get_snippet(&args.qualified_name) {
@@ -300,7 +323,7 @@ impl CbmRlmServer {
         } else {
             None
         };
-        let Ok(store) = open_store(&args.project) else {
+        let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
         match store.trace(&args.function_name, args.depth, &args.direction) {
@@ -318,7 +341,7 @@ impl CbmRlmServer {
 
     #[tool(description = "Execute a read-only graph query (SELECT on symbols/edges/files).")]
     fn query_graph(&self, Parameters(args): Parameters<QueryGraphArgs>) -> String {
-        let Ok(store) = open_store(&args.project) else {
+        let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
         let max_rows = args.max_rows.unwrap_or(100).min(1000);
@@ -330,7 +353,7 @@ impl CbmRlmServer {
 
     #[tool(description = "Get the schema of the knowledge graph.")]
     fn get_graph_schema(&self, Parameters(args): Parameters<ProjectArgs>) -> String {
-        let Ok(store) = open_store(&args.project) else {
+        let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
         json_ok(store.graph_schema())
@@ -358,7 +381,7 @@ impl CbmRlmServer {
 
     #[tool(description = "Architecture overview.")]
     fn get_architecture(&self, Parameters(args): Parameters<ProjectArgs>) -> String {
-        let Ok(store) = open_store(&args.project) else {
+        let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
         match (store.list_symbol_labels(), store.top_packages(10), store.summary()) {
@@ -373,7 +396,7 @@ impl CbmRlmServer {
 
     #[tool(description = "Detect git-changed files.")]
     fn detect_changes(&self, Parameters(args): Parameters<ProjectArgs>) -> String {
-        let Ok(store) = open_store(&args.project) else {
+        let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
         let Ok(Some(repo)) = store.get_meta("repo_path") else {
@@ -458,7 +481,7 @@ impl ServerHandler for CbmRlmServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
-                "Rust code intelligence MCP with RLM. Index first, filter with search_graph, map with get_code_snippet, chunk huge files with rlm_chunk.",
+                "Rust code intelligence MCP with RLM. Shares ~/.cache/codebase-memory-mcp with upstream but uses rs+ prefixed project names (e.g. rs+D-animejs-skills). Index first, then search_graph / rlm_filter.",
             )
     }
 }

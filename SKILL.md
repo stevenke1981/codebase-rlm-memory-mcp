@@ -24,15 +24,17 @@ Single MCP server: graph index and RLM are built-in (no separate codebase-memory
 1. `codebase-memory-rlm-rs` MCP server enabled (`codebase-memory-rlm` binary)
 2. Project indexed via `index_repository`
 
-Pass `project` on every graph tool call (defaults to repo folder name).
+**Project naming:** shares `~/.cache/codebase-memory-mcp` with upstream CBM, but Rust indexes use **`rs+` prefix** (e.g. upstream `D-animejs-skills` → Rust `rs+D-animejs-skills`). You may pass either form; `rs+` is added automatically.
+
+Pass `project` on every graph tool call (auto-derived as `rs+<upstream_key>`).
 
 ## RLM loop (graph-native)
 
 ### Phase 0 — Index
 
 ```
-index_repository(repo_path=".", project="my-app")
-index_status(project="my-app")
+index_repository(repo_path=".")
+index_status(project="rs+my-app")   # or upstream alias "my-app"
 ```
 
 ### Phase 1 — Filter

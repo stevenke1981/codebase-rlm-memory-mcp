@@ -451,20 +451,35 @@ fn row_to_hit(row: &rusqlite::Row<'_>) -> Result<SearchHit> {
     })
 }
 
-pub fn list_projects() -> Result<Vec<String>> {
+pub fn list_projects() -> Result<Vec<serde_json::Value>> {
     let root = crate::paths::cache_root();
     if !root.exists() {
         return Ok(Vec::new());
     }
+    let prefix = crate::paths::project_prefix();
     let mut projects = Vec::new();
     for entry in std::fs::read_dir(root)? {
         let entry = entry?;
         let name = entry.file_name().to_string_lossy().to_string();
-        if name.ends_with(".db") {
-            projects.push(name.trim_end_matches(".db").to_string());
+        if !name.ends_with(".db") {
+            continue;
         }
+        let project = name.trim_end_matches(".db").to_string();
+        if !project.starts_with(&prefix) {
+            continue;
+        }
+        projects.push(serde_json::json!({
+            "name": project,
+            "upstream_alias": crate::paths::upstream_alias(&project),
+            "engine": "codebase-memory-rlm-rs",
+        }));
     }
-    projects.sort();
+    projects.sort_by(|a, b| {
+        a["name"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["name"].as_str().unwrap_or(""))
+    });
     Ok(projects)
 }
 

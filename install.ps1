@@ -120,10 +120,13 @@ if (Test-Path $openCodeConfig) {
     $cfg = Get-Content $openCodeConfig -Raw | ConvertFrom-Json
     if (-not $cfg.mcp) { $cfg | Add-Member -NotePropertyName mcp -NotePropertyValue (@{}) }
     $cfg.mcp."codebase-memory-mcp" = @{
-        type    = "local"
-        command = $mcpCommand
-        enabled = $true
-        timeout = 120000
+        type        = "local"
+        command     = $mcpCommand
+        enabled     = $true
+        timeout     = 120000
+        environment = @{
+            CBM_RS_PROJECT_PREFIX = "rs+"
+        }
     }
     $cfg | ConvertTo-Json -Depth 20 | Set-Content $openCodeConfig -Encoding UTF8
     Write-Host "  ✓ Updated $openCodeConfig" -ForegroundColor Green
@@ -149,7 +152,14 @@ $codexBinary = $codexBinary -replace '\\', '/'
 if (Test-Path $codexConfig) {
     $toml = Get-Content $codexConfig -Raw
     $section = "[mcp_servers.codebase-memory-mcp]"
-    $newBlock = "$section`ntype = `"stdio`"`ncommand = `"$codexBinary`"`n"
+    $newBlock = @"
+$section
+type = "stdio"
+command = "$codexBinary"
+
+[mcp_servers.codebase-memory-mcp.env]
+CBM_RS_PROJECT_PREFIX = "rs+"
+"@
     if ($toml -match '\[mcp_servers\.codebase-memory-mcp\]') {
         $toml = $toml -replace '(?s)\[mcp_servers\.codebase-memory-mcp\][^\[]*', "$newBlock"
     } else {

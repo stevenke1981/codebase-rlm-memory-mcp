@@ -33,7 +33,16 @@
 | Embeddings / semantic search | ❌ roadmap |
 | Full upstream CBM parity | ❌ roadmap |
 
-Index cache: `~/.cache/codebase-memory-mcp/<project>.db`（可用 `CBM_CACHE_DIR` 覆寫，與上游相同）
+Index cache: `~/.cache/codebase-memory-mcp/`（與上游相同目錄，可用 `CBM_CACHE_DIR` 覆寫）
+
+**專案命名（與上游共存）：**
+
+| 引擎 | 專案名稱範例 | DB 檔案 |
+|------|-------------|---------|
+| 上游 CBM (C) | `D-animejs-skills` | `D-animejs-skills.db` |
+| Rust RLM-RS | `rs+D-animejs-skills` | `rs+D-animejs-skills.db` |
+
+Rust 版自動加 `rs+` 前綴（可用 `CBM_RS_PROJECT_PREFIX` 覆寫）。傳入上游名稱也會自動解析為 `rs+` 版本。
 
 ### Prerequisites / 前置需求
 

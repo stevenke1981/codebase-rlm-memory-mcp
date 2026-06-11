@@ -5,7 +5,7 @@ use regex::Regex;
 
 use crate::error::Result;
 use crate::models::Symbol;
-use crate::paths::project_key;
+
 use crate::store::Store;
 
 const SKIP_EXTENSIONS: &[&str] = &[
@@ -199,5 +199,5 @@ fn chrono_lite_now() -> String {
 }
 
 pub fn default_project_name(repo_path: &Path) -> String {
-    project_key(repo_path)
+    crate::paths::default_project_name(repo_path)
 }
