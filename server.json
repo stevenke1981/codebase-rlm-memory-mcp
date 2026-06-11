@@ -1,17 +1,17 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.stevenke1981/codebase-memory-rlm-rs",
-  "title": "Codebase Memory + RLM (Rust)",
-  "description": "Rust code intelligence MCP — codebase-memory-mcp compatible tools plus built-in RLM map-reduce.",
+  "name": "io.github.stevenke1981/codebase-rlm-memory-mcp",
+  "title": "CBRLM — Codebase RLM Memory MCP",
+  "description": "Rust code intelligence MCP (cbrlm) — CBM-compatible graph tools plus built-in RLM map-reduce.",
   "repository": {
-    "url": "https://github.com/stevenke1981/codebase-memory-rlm-rs",
+    "url": "https://github.com/stevenke1981/codebase-rlm-memory-mcp",
     "source": "github"
   },
   "version": "0.1.0",
   "packages": [
     {
       "registryType": "cargo",
-      "identifier": "codebase-memory-rlm-rs",
+      "identifier": "codebase-rlm-memory-mcp",
       "version": "0.1.0",
       "transport": {
         "type": "stdio"

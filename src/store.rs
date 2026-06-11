@@ -471,7 +471,8 @@ pub fn list_projects() -> Result<Vec<serde_json::Value>> {
         projects.push(serde_json::json!({
             "name": project,
             "upstream_alias": crate::paths::upstream_alias(&project),
-            "engine": "codebase-memory-rlm-rs",
+            "engine": "codebase-rlm-memory-mcp",
+            "abbrev": "cbrlm",
         }));
     }
     projects.sort_by(|a, b| {

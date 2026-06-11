@@ -14,13 +14,13 @@ use crate::rlm::RlmSessionStore;
 use crate::store::{delete_project, list_projects, project_exists, Store};
 
 #[derive(Clone)]
-pub struct CbmRlmServer {
+pub struct CbrlmServer {
     pub rlm: Arc<RlmSessionStore>,
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
 }
 
-impl CbmRlmServer {
+impl CbrlmServer {
     pub fn new() -> Self {
         Self {
             rlm: Arc::new(RlmSessionStore::new()),
@@ -29,7 +29,7 @@ impl CbmRlmServer {
     }
 }
 
-impl Default for CbmRlmServer {
+impl Default for CbrlmServer {
     fn default() -> Self {
         Self::new()
     }
@@ -181,7 +181,7 @@ fn resolve_and_open(project: &str) -> Result<(String, Store), String> {
 }
 
 #[tool_router]
-impl CbmRlmServer {
+impl CbrlmServer {
     #[tool(description = "Index a repository into the knowledge graph.")]
     fn index_repository(&self, Parameters(args): Parameters<IndexRepositoryArgs>) -> String {
         if args.mode.as_deref() == Some("cross-repo-intelligence") {
@@ -209,8 +209,9 @@ impl CbmRlmServer {
                     "persistence": args.persistence.unwrap_or(false),
                     "symbols_indexed": count,
                     "summary": summary,
-                    "engine": "codebase-memory-rlm-rs",
-                    "note": "Rust index uses rs+ prefixed project names; upstream CBM uses upstream_project"
+                    "engine": "codebase-rlm-memory-mcp",
+                    "abbrev": "cbrlm",
+                    "note": "CBRLM index uses cbrlm+ prefixed project names; upstream CBM uses upstream_project"
                 })),
                 Err(e) => json_err(e),
             },
@@ -226,7 +227,7 @@ impl CbmRlmServer {
                 "project": project,
                 "requested": args.project,
                 "indexed": false,
-                "hint": "Rust projects use rs+ prefix; pass upstream name or rs+name"
+                "hint": "CBRLM projects use cbrlm+ prefix; pass upstream name or cbrlm+name"
             }));
         }
         match Store::open(&project) {
@@ -364,7 +365,7 @@ impl CbmRlmServer {
         json_ok(serde_json::json!({
             "supported": false,
             "project": args.project,
-            "message": "manage_adr not implemented in codebase-memory-rlm-rs v0.1",
+            "message": "manage_adr not implemented in codebase-rlm-memory-mcp (cbrlm) v0.1",
             "workaround": "Store ADRs in repo .codebase-memory/adr.md manually"
         }))
     }
@@ -375,7 +376,7 @@ impl CbmRlmServer {
             "supported": false,
             "project": args.project,
             "traces_received": args.traces.len(),
-            "message": "ingest_traces not implemented in codebase-memory-rlm-rs v0.1"
+            "message": "ingest_traces not implemented in codebase-rlm-memory-mcp (cbrlm) v0.1"
         }))
     }
 
@@ -477,11 +478,11 @@ impl CbmRlmServer {
 }
 
 #[tool_handler]
-impl ServerHandler for CbmRlmServer {
+impl ServerHandler for CbrlmServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_instructions(
-                "Rust code intelligence MCP with RLM. Shares ~/.cache/codebase-memory-mcp with upstream but uses rs+ prefixed project names (e.g. rs+D-animejs-skills). Index first, then search_graph / rlm_filter.",
+                "CBRLM (codebase-rlm-memory-mcp): Rust code intelligence + RLM. Shares ~/.cache/codebase-memory-mcp with upstream CBM but uses cbrlm+ project names (e.g. cbrlm+D-animejs-skills). Index first, then search_graph / rlm_filter.",
             )
     }
 }

@@ -1,17 +1,17 @@
 [package]
-name = "codebase-memory-rlm-rs"
+name = "codebase-rlm-memory-mcp"
 version = "0.1.0"
 edition = "2021"
-description = "Rust code intelligence MCP server with RLM map-reduce orchestration"
+description = "CBRLM — Rust code intelligence MCP with RLM map-reduce (codebase-rlm-memory-mcp)"
 license = "MIT"
 readme = "README.md"
 
 [lib]
-name = "codebase_memory_rlm_rs"
+name = "codebase_rlm_memory_mcp"
 path = "src/lib.rs"
 
 [[bin]]
-name = "codebase-memory-rlm"
+name = "cbrlm"
 path = "src/main.rs"
 
 [dependencies]

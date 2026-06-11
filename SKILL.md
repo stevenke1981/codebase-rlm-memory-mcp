@@ -1,32 +1,31 @@
 ---
 name: rlm
 description: >
-  Recursive Language Model for large codebases via Rust MCP server codebase-memory-rlm-rs.
+  Recursive Language Model for large codebases via CBRLM (codebase-rlm-memory-mcp).
   Built-in graph index + RLM map-reduce. Use rlm_filter, rlm_read_symbol, trace_path;
   rlm_scan/rlm_chunk for logs and huge files. Triggers: analyze codebase, scan all files,
   large repository, RLM, find usage across project, security audit at scale.
 license: MIT
 compatibility: opencode, codex, claude-code
 metadata:
-  mcp-server: codebase-memory-rlm-rs
+  mcp-server: codebase-rlm-memory-mcp
+  abbrev: cbrlm
   standalone: true
   paper: https://arxiv.org/pdf/2512.24601
 ---
 
-# RLM + codebase-memory-rlm-rs
+# RLM + CBRLM (codebase-rlm-memory-mcp)
 
 **Context is external.** Use MCP tools — never bulk-read the repo into main context.
 
-Single MCP server: graph index and RLM are built-in (no separate codebase-memory-mcp required).
+MCP server: **`codebase-rlm-memory-mcp`** · binary: **`cbrlm`** · abbrev: **CBRLM**
 
 ## Prerequisites
 
-1. `codebase-memory-rlm-rs` MCP server enabled (`codebase-memory-rlm` binary)
+1. `codebase-rlm-memory-mcp` MCP server enabled (`cbrlm` binary)
 2. Project indexed via `index_repository`
 
-**Project naming:** shares `~/.cache/codebase-memory-mcp` with upstream CBM, but Rust indexes use **`rs+` prefix** (e.g. upstream `D-animejs-skills` → Rust `rs+D-animejs-skills`). You may pass either form; `rs+` is added automatically.
-
-Pass `project` on every graph tool call (auto-derived as `rs+<upstream_key>`).
+**Project naming:** shares `~/.cache/codebase-memory-mcp` with upstream CBM, but CBRLM indexes use **`cbrlm+` prefix** (e.g. upstream `D-animejs-skills` → CBRLM `cbrlm+D-animejs-skills`). Pass either form; `cbrlm+` is added automatically.
 
 ## RLM loop (graph-native)
 
@@ -34,7 +33,7 @@ Pass `project` on every graph tool call (auto-derived as `rs+<upstream_key>`).
 
 ```
 index_repository(repo_path=".")
-index_status(project="rs+my-app")   # or upstream alias "my-app"
+index_status(project="cbrlm+my-app")   # or upstream alias "my-app"
 ```
 
 ### Phase 1 — Filter
@@ -45,23 +44,17 @@ search_graph(project, query="auth middleware", label="Function")
 search_code(project, pattern="UserID", mode="files")
 ```
 
-For logs/CSV (not in graph): `rlm_scan(path)` → `rlm_peek(session_id, query)`
+For logs/CSV: `rlm_scan(path)` → `rlm_peek(session_id, query)`
 
 ### Phase 2 — Map (parallel)
-
-One tool call per worker — never combine symbols:
 
 ```
 rlm_read_symbol(project, qualified_name="api.routes.createUser")
 trace_path(project, function_name="handleAuth", direction="both")
-rlm_chunk(session_id, offset=0, limit=3)       # huge files only
+rlm_chunk(session_id, offset=0, limit=3)
 ```
 
-Spawn 3–10 parallel sub-agents; each handles 1 symbol or 1 chunk.
-
 ### Phase 3 — Reduce
-
-Merge worker JSON. Fill gaps with `trace_path` or `detect_changes`.
 
 ```
 rlm_workflow(phase="reduce")
@@ -76,14 +69,9 @@ get_architecture(project)
 | Index repo | `index_repository` |
 | Check index | `index_status` |
 | Filter symbols | `rlm_filter` / `search_graph` |
-| Filter file paths | `search_code(mode="files")` |
-| Read one symbol | `rlm_read_symbol` / `get_code_snippet` |
-| Trace calls/impact | `trace_path` |
-| Architecture | `get_architecture` |
-| Git impact | `detect_changes` |
-| Scan logs/CSV | `rlm_scan` |
-| Peek in session | `rlm_peek` |
-| Chunk huge file | `rlm_chunk` |
+| Read one symbol | `rlm_read_symbol` |
+| Trace calls | `trace_path` |
+| Scan logs/CSV | `rlm_scan` / `rlm_peek` / `rlm_chunk` |
 | Workflow help | `rlm_workflow` |
 
 ## Rules
@@ -91,5 +79,5 @@ get_architecture(project)
 1. Never load 10+ files into root context
 2. `rlm_read_symbol` = one qualified_name per call
 3. Prefer graph tools over `rg` when project is indexed
-4. Use `rlm_scan`/`rlm_chunk` only for non-code or unindexed blobs
-5. Always reduce to structured JSON before final answer
+4. Use `rlm_scan`/`rlm_chunk` only for non-code blobs
+5. Reduce to structured JSON before final answer

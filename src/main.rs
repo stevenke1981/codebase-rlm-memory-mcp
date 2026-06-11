@@ -1,7 +1,7 @@
 use rmcp::{transport::stdio, ServiceExt};
 use tracing_subscriber::{self, EnvFilter};
 
-use codebase_memory_rlm_rs::server::CbmRlmServer;
+use codebase_rlm_memory_mcp::server::CbrlmServer;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -10,7 +10,7 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse()?))
         .init();
 
-    let server = CbmRlmServer::new();
+    let server = CbrlmServer::new();
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
     Ok(())

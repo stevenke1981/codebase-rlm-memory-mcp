@@ -1,8 +1,8 @@
 use std::fs;
 use tempfile::tempdir;
 
-use codebase_memory_rlm_rs::index::Indexer;
-use codebase_memory_rlm_rs::store::Store;
+use codebase_rlm_memory_mcp::index::Indexer;
+use codebase_rlm_memory_mcp::store::Store;
 
 #[test]
 fn index_rust_repo() {
