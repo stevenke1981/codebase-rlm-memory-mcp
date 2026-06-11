@@ -1,0 +1,7 @@
+{
+  "codebase-memory-rlm-rs": {
+    "command": ["D:\\codebase-memory-rlm-rs\\target\\release\\codebase-memory-rlm.exe"],
+    "enabled": true,
+    "timeout": 120000
+  }
+}
