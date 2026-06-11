@@ -199,7 +199,8 @@ impl CbrlmServer {
         let Ok(store) = Store::open(&project).map_err(|e| e.to_string()) else {
             return json_err("failed to open store");
         };
-        match Indexer::index_repo(&store, repo) {
+        let mode = args.mode.as_deref().unwrap_or("full");
+        match Indexer::index_repo(&store, repo, mode) {
             Ok(count) => match store.summary() {
                 Ok(summary) => json_ok(serde_json::json!({
                     "project": project,
@@ -451,7 +452,7 @@ impl CbrlmServer {
 
     #[tool(description = "Paginated RLM chunks.")]
     fn rlm_chunk(&self, Parameters(args): Parameters<RlmChunkArgs>) -> String {
-        match self.rlm.with_session(&args.session_id, |s| {
+        match self.rlm.with_session_mut(&args.session_id, |s| {
             s.chunks(args.file_pattern.as_deref(), args.offset, args.limit)
         }) {
             Ok((total, chunks)) => json_ok(serde_json::json!({

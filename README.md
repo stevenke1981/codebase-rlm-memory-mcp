@@ -136,6 +136,30 @@ CBRLM_PROJECT_PREFIX = "cbrlm+"
 | `CBM_CACHE_DIR` | `~/.cache/codebase-memory-mcp` | 圖譜 DB 儲存目錄（與上游共用） |
 | `CBRLM_PROJECT_PREFIX` | `cbrlm+` | CBRLM 專案名稱前綴 |
 
+### Performance / 效能
+
+**已內建優化（v0.1.1）：**
+- SQLite WAL + 批次 transaction 索引
+- 預編譯 regex（不再每檔重編）
+- CALLS 推斷改用字串比對（取代逐個 regex）
+- `files_fts` 全文索引（`search_code` 不再掃全表）
+- `edges` / `symbols` 索引加速 `trace_path`
+- `rlm_chunk` 快取 chunk 列表
+- Release 編譯：`lto` + `strip`
+
+**加速索引（跳過 CALLS 邊）：**
+
+```
+index_repository(repo_path=".", mode="fast")
+```
+
+**日常使用建議：**
+- 索引一次，之後用 `search_graph` / `rlm_filter`（查詢毫秒級）
+- 避免重複 `index_repository`（除非程式碼大幅變動）
+- 大 repo 首次索引用 `mode="fast"`，需要呼叫圖再 `mode="full"`
+
+**未來可再快：** 平行檔案索引、tree-sitter、增量索引、不存 full file content（fast 模式）
+
 ### MCP tools
 
 #### Graph / CBM-compatible

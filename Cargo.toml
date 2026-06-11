@@ -1,6 +1,6 @@
 [package]
 name = "codebase-rlm-memory-mcp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "CBRLM — Rust code intelligence MCP with RLM map-reduce (codebase-rlm-memory-mcp)"
 license = "MIT"
@@ -34,3 +34,8 @@ anyhow = "1"
 [dev-dependencies]
 tempfile = "3"
 uuid = { version = "1", features = ["v4"] }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

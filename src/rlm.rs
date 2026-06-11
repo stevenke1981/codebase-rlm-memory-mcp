@@ -14,6 +14,7 @@ pub struct RlmSession {
     pub root: PathBuf,
     pub files: HashMap<String, String>,
     pub chunk_size: usize,
+    chunk_cache: Option<Vec<RlmChunk>>,
 }
 
 impl RlmSession {
@@ -42,6 +43,7 @@ impl RlmSession {
             root: root.to_path_buf(),
             files,
             chunk_size: CHUNK_SIZE,
+            chunk_cache: None,
         })
     }
 
@@ -74,11 +76,25 @@ impl RlmSession {
     }
 
     pub fn chunks(
-        &self,
+        &mut self,
         file_pattern: Option<&str>,
         offset: usize,
         limit: usize,
     ) -> (usize, Vec<RlmChunk>) {
+        if self.chunk_cache.is_none() {
+            self.chunk_cache = Some(self.build_chunks(None));
+        }
+        let all = if let Some(pat) = file_pattern {
+            self.build_chunks(Some(pat))
+        } else {
+            self.chunk_cache.clone().unwrap_or_default()
+        };
+        let total = all.len();
+        let page: Vec<RlmChunk> = all.into_iter().skip(offset).take(limit).collect();
+        (total, page)
+    }
+
+    fn build_chunks(&self, file_pattern: Option<&str>) -> Vec<RlmChunk> {
         let mut all = Vec::new();
         for (path, content) in &self.files {
             if let Some(pat) = file_pattern {
@@ -98,9 +114,7 @@ impl RlmSession {
                 });
             }
         }
-        let total = all.len();
-        let page: Vec<RlmChunk> = all.into_iter().skip(offset).take(limit).collect();
-        (total, page)
+        all
     }
 }
 
@@ -133,6 +147,17 @@ impl RlmSessionStore {
             .map_err(|e| AppError::msg(e.to_string()))?;
         let session = guard
             .get(id)
+            .ok_or_else(|| AppError::msg(format!("unknown session: {id}")))?;
+        Ok(f(session))
+    }
+
+    pub fn with_session_mut<T>(&self, id: &str, f: impl FnOnce(&mut RlmSession) -> T) -> Result<T> {
+        let mut guard = self
+            .inner
+            .write()
+            .map_err(|e| AppError::msg(e.to_string()))?;
+        let session = guard
+            .get_mut(id)
             .ok_or_else(|| AppError::msg(format!("unknown session: {id}")))?;
         Ok(f(session))
     }

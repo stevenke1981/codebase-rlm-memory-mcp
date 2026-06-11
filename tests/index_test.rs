@@ -17,7 +17,7 @@ fn index_rust_repo() {
 
     let project = format!("test-{}", uuid::Uuid::new_v4().simple());
     let store = Store::open(&project).unwrap();
-    let count = Indexer::index_repo(&store, dir.path()).unwrap();
+    let count = Indexer::index_repo(&store, dir.path(), "full").unwrap();
     assert!(count >= 1);
 
     let hits = store.search_graph(Some("hello"), None, None, 10).unwrap();

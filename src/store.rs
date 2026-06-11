@@ -20,8 +20,22 @@ impl Store {
             conn,
             project: project.to_string(),
         };
+        store.tune_connection()?;
         store.init_schema()?;
         Ok(store)
+    }
+
+    fn tune_connection(&self) -> Result<()> {
+        self.conn.execute_batch(
+            r#"
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA mmap_size = 268435456;
+            PRAGMA cache_size = -64000;
+            "#,
+        )?;
+        Ok(())
     }
 
     fn init_schema(&self) -> Result<()> {
@@ -52,12 +66,33 @@ impl Store {
                 dst_qn TEXT NOT NULL,
                 edge_type TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS idx_edges_src ON edges(src_qn);
+            CREATE INDEX IF NOT EXISTS idx_edges_dst ON edges(dst_qn);
+            CREATE INDEX IF NOT EXISTS idx_symbols_name ON symbols(name);
+            CREATE INDEX IF NOT EXISTS idx_symbols_file ON symbols(file_path);
             CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
                 qualified_name, name, signature, file_path
+            );
+            CREATE VIRTUAL TABLE IF NOT EXISTS files_fts USING fts5(
+                path, content
             );
             "#,
         )?;
         Ok(())
+    }
+
+    pub fn begin_batch(&self) -> Result<()> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        Ok(())
+    }
+
+    pub fn commit_batch(&self) -> Result<()> {
+        self.conn.execute_batch("COMMIT")?;
+        Ok(())
+    }
+
+    pub fn rollback_batch(&self) {
+        let _ = self.conn.execute_batch("ROLLBACK");
     }
 
     pub fn clear(&self) -> Result<()> {
@@ -65,6 +100,7 @@ impl Store {
             "DELETE FROM edges; DELETE FROM symbols; DELETE FROM files; DELETE FROM meta;",
         )?;
         self.conn.execute("DELETE FROM symbols_fts", [])?;
+        self.conn.execute("DELETE FROM files_fts", [])?;
         Ok(())
     }
 
@@ -92,6 +128,10 @@ impl Store {
             "INSERT INTO files(path, content, language, line_count) VALUES(?1, ?2, ?3, ?4)
              ON CONFLICT(path) DO UPDATE SET content=excluded.content, language=excluded.language, line_count=excluded.line_count",
             params![path, content, language, line_count],
+        )?;
+        self.conn.execute(
+            "INSERT INTO files_fts(path, content) VALUES(?1, ?2)",
+            params![path, content],
         )?;
         Ok(())
     }
@@ -212,10 +252,16 @@ impl Store {
     }
 
     pub fn search_code_files(&self, pattern: &str, limit: usize) -> Result<Vec<String>> {
+        let fts_query = fts_escape(pattern);
+        if let Ok(paths) = self.search_code_files_fts(&fts_query, limit) {
+            if !paths.is_empty() {
+                return Ok(paths);
+            }
+        }
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT file_path FROM files WHERE content LIKE ?1 LIMIT ?2",
+            "SELECT path FROM files WHERE content LIKE ?1 ESCAPE '\\' LIMIT ?2",
         )?;
-        let like = format!("%{pattern}%");
+        let like = like_escape(pattern);
         let mut rows = stmt.query(params![like, limit as i64])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
@@ -224,13 +270,35 @@ impl Store {
         Ok(out)
     }
 
-    pub fn search_code_matches(&self, pattern: &str, limit: usize) -> Result<Vec<(String, i64, String)>> {
-        let mut stmt = self.conn.prepare("SELECT path, content FROM files")?;
-        let mut rows = stmt.query([])?;
+    fn search_code_files_fts(&self, query: &str, limit: usize) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT path FROM files_fts WHERE files_fts MATCH ?1 LIMIT ?2",
+        )?;
+        let mut rows = stmt.query(params![query, limit as i64])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
-            let path: String = row.get(0)?;
-            let content: String = row.get(1)?;
+            out.push(row.get(0)?);
+        }
+        Ok(out)
+    }
+
+    pub fn search_code_matches(&self, pattern: &str, limit: usize) -> Result<Vec<(String, i64, String)>> {
+        let fts_query = fts_escape(pattern);
+        let candidate_paths = self
+            .search_code_files_fts(&fts_query, limit.saturating_mul(4).max(20))
+            .unwrap_or_default();
+        let paths = if candidate_paths.is_empty() {
+            self.search_code_files(pattern, limit.saturating_mul(4).max(20))?
+        } else {
+            candidate_paths
+        };
+
+        let mut out = Vec::new();
+        let mut stmt = self.conn.prepare("SELECT content FROM files WHERE path = ?1")?;
+        for path in paths {
+            let mut rows = stmt.query(params![path])?;
+            let Some(row) = rows.next()? else { continue };
+            let content: String = row.get(0)?;
             for (i, line) in content.lines().enumerate() {
                 if line.contains(pattern) {
                     out.push((path.clone(), (i as i64) + 1, line.to_string()));
@@ -438,6 +506,30 @@ fn sqlite_value_to_json(val: rusqlite::types::Value) -> serde_json::Value {
         rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
         rusqlite::types::Value::Blob(b) => serde_json::json!(format!("<blob {} bytes>", b.len())),
     }
+}
+
+fn fts_escape(pattern: &str) -> String {
+    pattern
+        .split_whitespace()
+        .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" OR ")
+}
+
+fn like_escape(pattern: &str) -> String {
+    let mut out = String::with_capacity(pattern.len() + 2);
+    out.push('%');
+    for c in pattern.chars() {
+        match c {
+            '%' | '_' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out.push('%');
+    out
 }
 
 fn row_to_hit(row: &rusqlite::Row<'_>) -> Result<SearchHit> {
