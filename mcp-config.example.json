@@ -1,7 +1,15 @@
 {
-  "codebase-memory-rlm-rs": {
-    "command": ["D:\\codebase-memory-rlm-rs\\target\\release\\codebase-memory-rlm.exe"],
+  "codebase-memory-mcp": {
+    "type": "local",
+    "command": [
+      "pwsh",
+      "-NoProfile",
+      "-Command",
+      "& \"$env:USERPROFILE\\.config\\opencode-codebase-memory-mcp\\bin\\codebase-memory-mcp.exe\""
+    ],
     "enabled": true,
-    "timeout": 120000
+    "timeout": 120000,
+    "_engine": "codebase-memory-rlm-rs",
+    "_note": "Drop-in compatible with DeusData/codebase-memory-mcp tool names. Includes RLM tools."
   }
 }

@@ -1,9 +1,15 @@
 use std::path::{Path, PathBuf};
 
+/// Compatible with upstream `CBM_CACHE_DIR` (default: `~/.cache/codebase-memory-mcp`).
 pub fn cache_root() -> PathBuf {
+    if let Ok(dir) = std::env::var("CBM_CACHE_DIR") {
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     dirs::cache_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("codebase-memory-rlm-rs")
+        .join("codebase-memory-mcp")
 }
 
 pub fn project_db_path(project: &str) -> PathBuf {

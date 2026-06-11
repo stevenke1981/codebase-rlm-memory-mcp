@@ -358,6 +358,65 @@ impl Store {
         Ok(out)
     }
 
+    pub fn graph_schema(&self) -> serde_json::Value {
+        let labels = self.list_symbol_labels().unwrap_or_default();
+        let edge_types = self.list_edge_types().unwrap_or_default();
+        serde_json::json!({
+            "engine": "sqlite",
+            "cypher_supported": false,
+            "node_labels": labels.iter().map(|(l, c)| serde_json::json!({ "label": l, "count": c })).collect::<Vec<_>>(),
+            "edge_types": edge_types.iter().map(|(t, c)| serde_json::json!({ "type": t, "count": c })).collect::<Vec<_>>(),
+            "tables": ["meta", "files", "symbols", "edges", "symbols_fts"],
+            "notes": "Use search_graph/trace_path. query_graph accepts read-only SELECT on these tables."
+        })
+    }
+
+    fn list_edge_types(&self) -> Result<Vec<(String, i64)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT edge_type, COUNT(*) FROM edges GROUP BY edge_type ORDER BY 2 DESC")?;
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            out.push((row.get(0)?, row.get(1)?));
+        }
+        Ok(out)
+    }
+
+    pub fn query_graph_sql(&self, query: &str, max_rows: usize) -> Result<Vec<serde_json::Value>> {
+        let upper = query.trim().to_uppercase();
+        if !upper.starts_with("SELECT") {
+            return Err(AppError::msg(
+                "v0.1: Cypher not supported. Use read-only SELECT on symbols/edges/files, or search_graph/trace_path.",
+            ));
+        }
+        for bad in ["INSERT", "UPDATE", "DELETE", "DROP", "ATTACH", "DETACH", "ALTER", "CREATE"] {
+            if upper.contains(bad) {
+                return Err(AppError::msg(format!("forbidden keyword in query: {bad}")));
+            }
+        }
+        let sql = format!("{query} LIMIT {}", max_rows.max(1));
+        let mut stmt = self.conn.prepare(&sql)?;
+        let col_count = stmt.column_count();
+        let col_names: Vec<String> = (0..col_count)
+            .map(|i| stmt.column_name(i).unwrap_or("").to_string())
+            .collect();
+        let mut rows = stmt.query([])?;
+        let mut out = Vec::new();
+        while let Some(row) = rows.next()? {
+            let mut obj = serde_json::Map::new();
+            for (i, name) in col_names.iter().enumerate() {
+                let val: rusqlite::types::Value = row.get(i)?;
+                obj.insert(name.clone(), sqlite_value_to_json(val));
+            }
+            out.push(serde_json::Value::Object(obj));
+            if out.len() >= max_rows {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
     pub fn top_packages(&self, limit: usize) -> Result<Vec<(String, i64)>> {
         let mut stmt = self.conn.prepare(
             "SELECT file_path, COUNT(*) as c FROM symbols GROUP BY file_path ORDER BY c DESC LIMIT ?1",
@@ -368,6 +427,16 @@ impl Store {
             out.push((row.get(0)?, row.get(1)?));
         }
         Ok(out)
+    }
+}
+
+fn sqlite_value_to_json(val: rusqlite::types::Value) -> serde_json::Value {
+    match val {
+        rusqlite::types::Value::Null => serde_json::Value::Null,
+        rusqlite::types::Value::Integer(i) => serde_json::json!(i),
+        rusqlite::types::Value::Real(f) => serde_json::json!(f),
+        rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
+        rusqlite::types::Value::Blob(b) => serde_json::json!(format!("<blob {} bytes>", b.len())),
     }
 }
 

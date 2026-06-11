@@ -38,6 +38,9 @@ impl Default for CbmRlmServer {
 pub struct IndexRepositoryArgs {
     pub repo_path: String,
     pub project: Option<String>,
+    pub mode: Option<String>,
+    pub target_projects: Option<Vec<String>>,
+    pub persistence: Option<bool>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -51,6 +54,10 @@ pub struct SearchGraphArgs {
     pub query: Option<String>,
     pub name_pattern: Option<String>,
     pub label: Option<String>,
+    pub qn_pattern: Option<String>,
+    pub file_pattern: Option<String>,
+    #[serde(default)]
+    pub offset: usize,
     #[serde(default = "default_limit")]
     pub limit: usize,
 }
@@ -59,6 +66,8 @@ pub struct SearchGraphArgs {
 pub struct SearchCodeArgs {
     pub project: String,
     pub pattern: String,
+    pub file_pattern: Option<String>,
+    pub path_filter: Option<String>,
     #[serde(default = "default_mode")]
     pub mode: String,
     #[serde(default = "default_limit")]
@@ -79,6 +88,28 @@ pub struct TraceArgs {
     pub direction: String,
     #[serde(default = "default_depth")]
     pub depth: i64,
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct QueryGraphArgs {
+    pub project: String,
+    pub query: String,
+    pub max_rows: Option<usize>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ManageAdrArgs {
+    pub project: String,
+    pub mode: Option<String>,
+    pub content: Option<String>,
+    pub sections: Option<Vec<String>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct IngestTracesArgs {
+    pub project: String,
+    pub traces: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -150,6 +181,12 @@ fn open_store(project: &str) -> Result<Store, String> {
 impl CbmRlmServer {
     #[tool(description = "Index a repository into the knowledge graph.")]
     fn index_repository(&self, Parameters(args): Parameters<IndexRepositoryArgs>) -> String {
+        if args.mode.as_deref() == Some("cross-repo-intelligence") {
+            return json_ok(serde_json::json!({
+                "warning": "cross-repo-intelligence not supported in v0.1",
+                "hint": "Index each repo separately with mode=full|moderate|fast"
+            }));
+        }
         let repo = Path::new(&args.repo_path);
         let project = args
             .project
@@ -161,8 +198,11 @@ impl CbmRlmServer {
             Ok(count) => match store.summary() {
                 Ok(summary) => json_ok(serde_json::json!({
                     "project": project,
+                    "mode": args.mode.unwrap_or_else(|| "full".into()),
+                    "persistence": args.persistence.unwrap_or(false),
                     "symbols_indexed": count,
                     "summary": summary,
+                    "engine": "codebase-memory-rlm-rs",
                 })),
                 Err(e) => json_err(e),
             },
@@ -254,13 +294,66 @@ impl CbmRlmServer {
 
     #[tool(description = "Trace call paths.")]
     fn trace_path(&self, Parameters(args): Parameters<TraceArgs>) -> String {
+        let mode = args.mode.clone().unwrap_or_else(|| "calls".into());
+        let warning = if mode != "calls" {
+            Some(format!("mode '{mode}' not supported in v0.1; fell back to calls"))
+        } else {
+            None
+        };
         let Ok(store) = open_store(&args.project) else {
             return json_err("failed to open store");
         };
         match store.trace(&args.function_name, args.depth, &args.direction) {
-            Ok(hops) => json_ok(serde_json::json!({ "hops": hops })),
+            Ok(hops) => {
+                let mut body = serde_json::json!({ "mode": "calls", "hops": hops });
+                if let Some(w) = warning {
+                    body["warning"] = serde_json::Value::String(w);
+                    body["requested_mode"] = serde_json::Value::String(mode);
+                }
+                json_ok(body)
+            }
             Err(e) => json_err(e),
         }
+    }
+
+    #[tool(description = "Execute a read-only graph query (SELECT on symbols/edges/files).")]
+    fn query_graph(&self, Parameters(args): Parameters<QueryGraphArgs>) -> String {
+        let Ok(store) = open_store(&args.project) else {
+            return json_err("failed to open store");
+        };
+        let max_rows = args.max_rows.unwrap_or(100).min(1000);
+        match store.query_graph_sql(&args.query, max_rows) {
+            Ok(rows) => json_ok(serde_json::json!({ "rows": rows, "count": rows.len() })),
+            Err(e) => json_err(e),
+        }
+    }
+
+    #[tool(description = "Get the schema of the knowledge graph.")]
+    fn get_graph_schema(&self, Parameters(args): Parameters<ProjectArgs>) -> String {
+        let Ok(store) = open_store(&args.project) else {
+            return json_err("failed to open store");
+        };
+        json_ok(store.graph_schema())
+    }
+
+    #[tool(description = "Create or update Architecture Decision Records.")]
+    fn manage_adr(&self, Parameters(args): Parameters<ManageAdrArgs>) -> String {
+        json_ok(serde_json::json!({
+            "supported": false,
+            "project": args.project,
+            "message": "manage_adr not implemented in codebase-memory-rlm-rs v0.1",
+            "workaround": "Store ADRs in repo .codebase-memory/adr.md manually"
+        }))
+    }
+
+    #[tool(description = "Ingest runtime traces to enhance the knowledge graph.")]
+    fn ingest_traces(&self, Parameters(args): Parameters<IngestTracesArgs>) -> String {
+        json_ok(serde_json::json!({
+            "supported": false,
+            "project": args.project,
+            "traces_received": args.traces.len(),
+            "message": "ingest_traces not implemented in codebase-memory-rlm-rs v0.1"
+        }))
     }
 
     #[tool(description = "Architecture overview.")]

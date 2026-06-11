@@ -33,7 +33,7 @@
 | Embeddings / semantic search | ❌ roadmap |
 | Full upstream CBM parity | ❌ roadmap |
 
-Index cache: `~/.cache/codebase-memory-rlm-rs/<project>.db`
+Index cache: `~/.cache/codebase-memory-mcp/<project>.db`（可用 `CBM_CACHE_DIR` 覆寫，與上游相同）
 
 ### Prerequisites / 前置需求
 
@@ -42,21 +42,28 @@ Index cache: `~/.cache/codebase-memory-rlm-rs/<project>.db`
 
 ### Install / 安裝
 
-**Clone & build:**
-
-```bash
-git clone https://github.com/stevenke1981/codebase-memory-rlm-rs.git
-cd codebase-memory-rlm-rs
-cargo build --release
-```
-
-**Windows (PowerShell):**
+**Windows（推薦，一鍵編譯 + MCP 設定）：**
 
 ```powershell
 git clone https://github.com/stevenke1981/codebase-memory-rlm-rs.git
 cd codebase-memory-rlm-rs
-cargo build --release
 .\install.ps1
+```
+
+`install.ps1` 會：
+- `cargo build --release` 編譯二進位
+- 安裝為 `codebase-memory-mcp.exe`（與上游 **同名**，skills 免改）
+- 備份上游二進位為 `*.upstream.bak`
+- 更新 OpenCode `opencode.json` 與 Codex `config.toml`
+- 安裝 `rlm` skill
+
+若不想覆蓋上游 C 版：`.\install.ps1 -NoReplace`
+
+**手動編譯：**
+
+```bash
+cargo build --release
+# → target/release/codebase-memory-rlm.exe
 ```
 
 **Linux / macOS:**
@@ -79,16 +86,19 @@ cargo install --path .
 
 ### MCP configuration / MCP 設定
 
-只需 **一個** MCP server（與 Python 版 `codebase-memory-rlm-mcp` 不同，後者需搭配上游 CBM）。
+使用與上游相同的 MCP 名稱 **`codebase-memory-mcp`**，現有 skills / AGENTS.md 規則無需修改。
 
-**OpenCode** (`~/.config/opencode/opencode.json`):
+**OpenCode** (`~/.config/opencode/opencode.json`) — `install.ps1` 會自動寫入：
 
 ```json
 {
   "mcp": {
-    "codebase-memory-rlm-rs": {
+    "codebase-memory-mcp": {
       "type": "local",
-      "command": ["codebase-memory-rlm"],
+      "command": [
+        "pwsh", "-NoProfile", "-Command",
+        "& \"$env:USERPROFILE\\.config\\opencode-codebase-memory-mcp\\bin\\codebase-memory-mcp.exe\""
+      ],
       "enabled": true,
       "timeout": 120000
     }
@@ -96,30 +106,15 @@ cargo install --path .
 }
 ```
 
-若未 `cargo install`，使用完整路徑：
-
-```json
-"command": ["D:\\codebase-memory-rlm-rs\\target\\release\\codebase-memory-rlm.exe"]
-```
-
-**Claude Code** (`~/.claude/settings.json` or project `.mcp.json`):
-
-```json
-{
-  "mcpServers": {
-    "codebase-memory-rlm-rs": {
-      "command": "codebase-memory-rlm"
-    }
-  }
-}
-```
-
-**Codex** (`~/.codex/config.toml`):
+**Codex** (`~/.codex/config.toml`) — `install.ps1` 會自動寫入：
 
 ```toml
-[mcp_servers.codebase-memory-rlm-rs]
-command = "codebase-memory-rlm"
+[mcp_servers.codebase-memory-mcp]
+type = "stdio"
+command = "C:/Users/YOU/AppData/Local/Programs/codebase-memory-mcp/codebase-memory-mcp.exe"
 ```
+
+**Claude Code** — 同上，server 名稱用 `codebase-memory-mcp`。
 
 ### Quick start / 快速開始
 
@@ -143,6 +138,10 @@ command = "codebase-memory-rlm"
 | `trace_path` | Trace call paths |
 | `get_architecture` | Architecture overview |
 | `detect_changes` | Git-changed files |
+| `query_graph` | Read-only SELECT on graph tables |
+| `get_graph_schema` | Node labels and edge types |
+| `manage_adr` | Stub (v0.1) |
+| `ingest_traces` | Stub (v0.1) |
 
 #### RLM
 
