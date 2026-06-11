@@ -21,7 +21,7 @@ $McpBinaryName = "cbrlm.exe"
 $McpServerName = "codebase-rlm-memory-mcp"
 $CodexHookBegin = "# >>> codebase-rlm-memory-mcp SessionStart >>>"
 $CodexHookEnd = "# <<< codebase-rlm-memory-mcp SessionStart <<<"
-$CodexReminderCmd = 'echo "Code discovery: prefer codebase-rlm-memory-mcp (search_graph, trace_path, rlm_filter, rlm_read_symbol) over grep/file-read; projects use cbrlm+ prefix; run index_repository first if not indexed."'
+$CodexReminderCmd = 'pwsh -NoProfile -File "{{CBRLM_SESSION_HOOK}}"'
 
 function Write-Step([string]$Msg) {
     Write-Host ""
@@ -65,7 +65,10 @@ function Install-Hooks {
 }
 
 function Update-CodexSessionHooks {
-    param([string]$ConfigPath)
+    param(
+        [string]$ConfigPath,
+        [string]$ReminderCommand = $CodexReminderCmd
+    )
     if (-not (Test-Path $ConfigPath)) {
         Write-Host "  ! config.toml not found, skipped Codex hooks" -ForegroundColor Yellow
         return
@@ -78,7 +81,7 @@ matcher = "startup|resume|clear|compact"
 
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = '$CodexReminderCmd'
+command = '$ReminderCommand'
 $CodexHookEnd
 "@
     $toml = Get-Content $ConfigPath -Raw
@@ -112,7 +115,7 @@ function Update-ClaudeHooks {
             $cmd -notlike '*cbrlm-code-discovery-gate*'
         }
     }
-    $pre += @{
+    $pre += ,@{
         matcher = 'Grep|Glob'
         hooks   = @(
             @{
@@ -134,7 +137,7 @@ function Update-ClaudeHooks {
         }
     }
     foreach ($matcher in $sessionMatchers) {
-        $session += @{
+        $session += ,@{
             matcher = $matcher
             hooks   = @(
                 @{
@@ -273,14 +276,19 @@ CBRLM_PROJECT_PREFIX = "cbrlm+"
 
 "@
     if ($toml -match "\[mcp_servers\.$([regex]::Escape($McpServerName))\]") {
-        $toml = $toml -replace "(?s)\[mcp_servers\.$([regex]::Escape($McpServerName))\](?:\r?\n(?!\[mcp_servers\.)).*?(?=\r?\n\[|\z)", $newBlock.TrimEnd()
+        # Match server + .env tables; stop before the next MCP server, hooks block, or EOF.
+        $escaped = [regex]::Escape($McpServerName)
+        $pattern = "(?s)\[mcp_servers\.$escaped\][\s\S]*?(?=\r?\n\[mcp_servers\.(?!$escaped(?:\]|\.))|\r?\n\[\[hooks\.|\r?\n# >>> codebase-rlm-memory-mcp SessionStart >>>|\z)"
+        $toml = $toml -replace $pattern, $newBlock.TrimEnd()
     } else {
         $toml = $toml.TrimEnd() + "`n`n$newBlock"
     }
     if (-not $toml.EndsWith("`n")) { $toml += "`n" }
     Set-Content $codexConfig $toml -Encoding UTF8 -NoNewline
     Write-Host "  ✓ Updated Codex MCP in $codexConfig" -ForegroundColor Green
-    Update-CodexSessionHooks $codexConfig
+    $sessionHookPath = (Join-Path $CbrlmHooksDir "cbrlm-session-reminder.ps1") -replace '\\', '/'
+    $codexReminderCmd = $CodexReminderCmd.Replace('{{CBRLM_SESSION_HOOK}}', $sessionHookPath)
+    Update-CodexSessionHooks $codexConfig $codexReminderCmd
 } else {
     Write-Host "  ! config.toml not found, skipped" -ForegroundColor Yellow
 }
