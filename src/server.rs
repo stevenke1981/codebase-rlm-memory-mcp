@@ -11,7 +11,7 @@ use crate::git_util::detect_changed_files;
 use crate::index::{default_project_name, Indexer};
 use crate::paths::{resolve_project_name, upstream_alias, upstream_project_key};
 use crate::rlm::RlmSessionStore;
-use crate::store::{delete_project, list_projects, project_exists, Store};
+use crate::store::{delete_project, list_projects, project_exists, SearchGraphFilter, Store};
 
 #[derive(Clone)]
 pub struct CbrlmServer {
@@ -57,6 +57,14 @@ pub struct SearchGraphArgs {
     pub label: Option<String>,
     pub qn_pattern: Option<String>,
     pub file_pattern: Option<String>,
+    pub relationship: Option<String>,
+    pub min_degree: Option<i64>,
+    pub max_degree: Option<i64>,
+    #[serde(default)]
+    pub exclude_entry_points: bool,
+    #[serde(default)]
+    pub include_connected: bool,
+    pub semantic_query: Option<Vec<String>>,
     #[serde(default)]
     pub offset: usize,
     #[serde(default = "default_limit")]
@@ -174,6 +182,10 @@ fn json_err(msg: impl std::fmt::Display) -> String {
     json_ok(serde_json::json!({ "error": msg.to_string() }))
 }
 
+fn json_err_value(value: serde_json::Value) -> String {
+    json_ok(serde_json::json!({ "error": value }))
+}
+
 fn resolve_and_open(project: &str) -> Result<(String, Store), String> {
     let resolved = resolve_project_name(project);
     let store = Store::open(&resolved).map_err(|e| e.to_string())?;
@@ -185,8 +197,8 @@ impl CbrlmServer {
     #[tool(description = "Index a repository into the knowledge graph.")]
     fn index_repository(&self, Parameters(args): Parameters<IndexRepositoryArgs>) -> String {
         if args.mode.as_deref() == Some("cross-repo-intelligence") {
-            return json_ok(serde_json::json!({
-                "warning": "cross-repo-intelligence not supported in v0.1",
+            return json_err_value(serde_json::json!({
+                "unsupported": "cross-repo-intelligence",
                 "hint": "Index each repo separately with mode=full|moderate|fast"
             }));
         }
@@ -267,13 +279,38 @@ impl CbrlmServer {
         let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
-        match store.search_graph(
-            args.query.as_deref(),
-            args.name_pattern.as_deref(),
-            args.label.as_deref(),
-            args.limit,
-        ) {
-            Ok(hits) => json_ok(serde_json::json!({ "results": hits })),
+        match store.search_graph(SearchGraphFilter {
+            query: args.query.as_deref(),
+            name_pattern: args.name_pattern.as_deref(),
+            label: args.label.as_deref(),
+            qn_pattern: args.qn_pattern.as_deref(),
+            file_pattern: args.file_pattern.as_deref(),
+            relationship: args.relationship.as_deref(),
+            min_degree: args.min_degree,
+            max_degree: args.max_degree,
+            exclude_entry_points: args.exclude_entry_points,
+            include_connected: args.include_connected,
+            offset: args.offset,
+            limit: args.limit,
+        }) {
+            Ok(page) => {
+                let mut body = serde_json::to_value(page).unwrap_or_else(|_| {
+                    serde_json::json!({
+                        "results": [],
+                        "total": 0,
+                        "offset": args.offset,
+                        "limit": args.limit,
+                        "has_more": false
+                    })
+                });
+                if args.semantic_query.is_some() {
+                    body["semantic_results"] = serde_json::json!([]);
+                    body["warning"] = serde_json::json!(
+                        "semantic_query is accepted for CBM API compatibility but not implemented in CBRLM v0.1"
+                    );
+                }
+                json_ok(body)
+            }
             Err(e) => json_err(e),
         }
     }
@@ -283,16 +320,22 @@ impl CbrlmServer {
         let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
+        let path_filter = args.file_pattern.as_deref().or(args.path_filter.as_deref());
         if args.mode == "files" {
             match store.search_code_files(&args.pattern, args.limit) {
-                Ok(files) => return json_ok(serde_json::json!({ "files": files })),
+                Ok(files) => {
+                    let files = filter_paths(files, path_filter, args.limit);
+                    return json_ok(serde_json::json!({ "files": files }));
+                }
                 Err(e) => return json_err(e),
             }
         }
-        match store.search_code_matches(&args.pattern, args.limit) {
+        match store.search_code_matches(&args.pattern, args.limit.saturating_mul(4).max(20)) {
             Ok(matches) => {
                 let rows: Vec<_> = matches
                     .into_iter()
+                    .filter(|(file, _, _)| path_filter.is_none_or(|pat| path_matches(pat, file)))
+                    .take(args.limit)
                     .map(|(file, line, content)| {
                         serde_json::json!({ "file": file, "line": line, "content": content })
                     })
@@ -321,7 +364,9 @@ impl CbrlmServer {
     fn trace_path(&self, Parameters(args): Parameters<TraceArgs>) -> String {
         let mode = args.mode.clone().unwrap_or_else(|| "calls".into());
         let warning = if mode != "calls" {
-            Some(format!("mode '{mode}' not supported in v0.1; fell back to calls"))
+            Some(format!(
+                "mode '{mode}' not supported in v0.1; fell back to calls"
+            ))
         } else {
             None
         };
@@ -363,8 +408,8 @@ impl CbrlmServer {
 
     #[tool(description = "Create or update Architecture Decision Records.")]
     fn manage_adr(&self, Parameters(args): Parameters<ManageAdrArgs>) -> String {
-        json_ok(serde_json::json!({
-            "supported": false,
+        json_err_value(serde_json::json!({
+            "unsupported": "manage_adr",
             "project": args.project,
             "message": "manage_adr not implemented in codebase-rlm-memory-mcp (cbrlm) v0.1",
             "workaround": "Store ADRs in repo .codebase-memory/adr.md manually"
@@ -373,8 +418,8 @@ impl CbrlmServer {
 
     #[tool(description = "Ingest runtime traces to enhance the knowledge graph.")]
     fn ingest_traces(&self, Parameters(args): Parameters<IngestTracesArgs>) -> String {
-        json_ok(serde_json::json!({
-            "supported": false,
+        json_err_value(serde_json::json!({
+            "unsupported": "ingest_traces",
             "project": args.project,
             "traces_received": args.traces.len(),
             "message": "ingest_traces not implemented in codebase-rlm-memory-mcp (cbrlm) v0.1"
@@ -386,7 +431,11 @@ impl CbrlmServer {
         let Ok((_project, store)) = resolve_and_open(&args.project) else {
             return json_err("failed to open store");
         };
-        match (store.list_symbol_labels(), store.top_packages(10), store.summary()) {
+        match (
+            store.list_symbol_labels(),
+            store.top_packages(10),
+            store.summary(),
+        ) {
             (Ok(labels), Ok(top), Ok(summary)) => json_ok(serde_json::json!({
                 "summary": summary,
                 "labels": labels,
@@ -441,7 +490,10 @@ impl CbrlmServer {
 
     #[tool(description = "Peek in RLM session.")]
     fn rlm_peek(&self, Parameters(args): Parameters<RlmPeekArgs>) -> String {
-        match self.rlm.with_session(&args.session_id, |s| s.peek(&args.query, args.limit)) {
+        match self
+            .rlm
+            .with_session(&args.session_id, |s| s.peek(&args.query, args.limit))
+        {
             Ok(matches) => json_ok(serde_json::json!({
                 "session_id": args.session_id,
                 "matches": matches,
@@ -475,6 +527,33 @@ impl CbrlmServer {
     fn rlm_session_delete(&self, Parameters(args): Parameters<RlmSessionIdArgs>) -> String {
         let deleted = self.rlm.delete(&args.session_id);
         json_ok(serde_json::json!({ "session_id": args.session_id, "deleted": deleted }))
+    }
+}
+
+fn filter_paths(files: Vec<String>, pattern: Option<&str>, limit: usize) -> Vec<String> {
+    files
+        .into_iter()
+        .filter(|file| pattern.is_none_or(|pat| path_matches(pat, file)))
+        .take(limit)
+        .collect()
+}
+
+fn path_matches(pattern: &str, path: &str) -> bool {
+    let pat = pattern
+        .replace(".*", "*")
+        .replace(['^', '$'], "")
+        .replace('\\', "/");
+    if pat.contains('*') {
+        let mut rest = path;
+        for part in pat.split('*').filter(|p| !p.is_empty()) {
+            let Some(idx) = rest.find(part) else {
+                return false;
+            };
+            rest = &rest[idx + part.len()..];
+        }
+        true
+    } else {
+        path.contains(&pat)
     }
 }
 

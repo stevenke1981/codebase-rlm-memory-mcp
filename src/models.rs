@@ -32,6 +32,15 @@ pub struct SearchHit {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchGraphPage {
+    pub results: Vec<SearchHit>,
+    pub total: usize,
+    pub offset: usize,
+    pub limit: usize,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeMatch {
     pub file_path: String,
     pub line: i64,

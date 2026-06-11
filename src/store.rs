@@ -1,8 +1,24 @@
 use rusqlite::{params, Connection};
 
 use crate::error::{AppError, Result};
-use crate::models::{IndexSummary, SearchHit, Symbol, TraceHop};
+use crate::models::{IndexSummary, SearchGraphPage, SearchHit, Symbol, TraceHop};
 use crate::paths::project_db_path;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SearchGraphFilter<'a> {
+    pub query: Option<&'a str>,
+    pub name_pattern: Option<&'a str>,
+    pub label: Option<&'a str>,
+    pub qn_pattern: Option<&'a str>,
+    pub file_pattern: Option<&'a str>,
+    pub relationship: Option<&'a str>,
+    pub min_degree: Option<i64>,
+    pub max_degree: Option<i64>,
+    pub exclude_entry_points: bool,
+    pub include_connected: bool,
+    pub offset: usize,
+    pub limit: usize,
+}
 
 pub struct Store {
     conn: Connection,
@@ -123,7 +139,13 @@ impl Store {
         }
     }
 
-    pub fn insert_file(&self, path: &str, content: &str, language: &str, line_count: i64) -> Result<()> {
+    pub fn insert_file(
+        &self,
+        path: &str,
+        content: &str,
+        language: &str,
+        line_count: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO files(path, content, language, line_count) VALUES(?1, ?2, ?3, ?4)
              ON CONFLICT(path) DO UPDATE SET content=excluded.content, language=excluded.language, line_count=excluded.line_count",
@@ -169,86 +191,106 @@ impl Store {
         Ok(())
     }
 
-    pub fn search_graph(
-        &self,
-        query: Option<&str>,
-        name_pattern: Option<&str>,
-        label: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<SearchHit>> {
+    pub fn search_graph(&self, filter: SearchGraphFilter<'_>) -> Result<SearchGraphPage> {
         let mut hits = Vec::new();
-        if let Some(q) = query {
-            let sql = if label.is_some() {
+        if let Some(q) = filter.query.filter(|q| !q.trim().is_empty()) {
+            let sql = if filter.label.is_some() {
                 "SELECT s.qualified_name, s.name, s.label, s.file_path, s.line_start, bm25(symbols_fts) AS score
                  FROM symbols_fts f JOIN symbols s ON s.qualified_name = f.qualified_name
                  WHERE symbols_fts MATCH ?1 AND s.label = ?2
-                 ORDER BY score LIMIT ?3"
+                 ORDER BY score"
             } else {
                 "SELECT s.qualified_name, s.name, s.label, s.file_path, s.line_start, bm25(symbols_fts) AS score
                  FROM symbols_fts f JOIN symbols s ON s.qualified_name = f.qualified_name
                  WHERE symbols_fts MATCH ?1
-                 ORDER BY score LIMIT ?2"
+                 ORDER BY score"
             };
             let mut stmt = self.conn.prepare(sql)?;
-            if let Some(lbl) = label {
-                let mut rows = stmt.query(params![q, lbl, limit as i64])?;
+            if let Some(lbl) = filter.label {
+                let mut rows = stmt.query(params![q, lbl])?;
                 while let Some(row) = rows.next()? {
                     hits.push(row_to_hit(row)?);
                 }
             } else {
-                let mut rows = stmt.query(params![q, limit as i64])?;
+                let mut rows = stmt.query(params![q])?;
                 while let Some(row) = rows.next()? {
                     hits.push(row_to_hit(row)?);
                 }
             }
-            return Ok(hits);
-        }
-
-        let like_pat = name_pattern.map(|p| p.replace(".*", "%").replace('^', "").replace('$', ""));
-
-        match (like_pat.as_deref(), label) {
-            (Some(lp), Some(lbl)) => {
-                let mut stmt = self.conn.prepare(
-                    "SELECT qualified_name, name, label, file_path, line_start, 1.0 AS score
-                     FROM symbols WHERE name LIKE ?1 AND label = ?2 LIMIT ?3",
-                )?;
-                let mut rows = stmt.query(params![lp, lbl, limit as i64])?;
-                while let Some(row) = rows.next()? {
-                    hits.push(row_to_hit(row)?);
-                }
+        } else if let Some(lbl) = filter.label {
+            let mut stmt = self.conn.prepare(
+                "SELECT qualified_name, name, label, file_path, line_start, 1.0 AS score
+                 FROM symbols WHERE label = ?1 ORDER BY file_path, line_start",
+            )?;
+            let mut rows = stmt.query(params![lbl])?;
+            while let Some(row) = rows.next()? {
+                hits.push(row_to_hit(row)?);
             }
-            (Some(lp), None) => {
-                let mut stmt = self.conn.prepare(
-                    "SELECT qualified_name, name, label, file_path, line_start, 1.0 AS score
-                     FROM symbols WHERE name LIKE ?1 LIMIT ?2",
-                )?;
-                let mut rows = stmt.query(params![lp, limit as i64])?;
-                while let Some(row) = rows.next()? {
-                    hits.push(row_to_hit(row)?);
-                }
-            }
-            (None, Some(lbl)) => {
-                let mut stmt = self.conn.prepare(
-                    "SELECT qualified_name, name, label, file_path, line_start, 1.0 AS score
-                     FROM symbols WHERE label = ?1 LIMIT ?2",
-                )?;
-                let mut rows = stmt.query(params![lbl, limit as i64])?;
-                while let Some(row) = rows.next()? {
-                    hits.push(row_to_hit(row)?);
-                }
-            }
-            (None, None) => {
-                let mut stmt = self.conn.prepare(
-                    "SELECT qualified_name, name, label, file_path, line_start, 1.0 AS score
-                     FROM symbols LIMIT ?1",
-                )?;
-                let mut rows = stmt.query(params![limit as i64])?;
-                while let Some(row) = rows.next()? {
-                    hits.push(row_to_hit(row)?);
-                }
+        } else {
+            let mut stmt = self.conn.prepare(
+                "SELECT qualified_name, name, label, file_path, line_start, 1.0 AS score
+                     FROM symbols ORDER BY file_path, line_start",
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                hits.push(row_to_hit(row)?);
             }
         }
-        Ok(hits)
+
+        let mut filtered = Vec::new();
+        for hit in hits {
+            if let Some(pat) = filter.name_pattern {
+                if !pattern_matches(pat, &hit.name) {
+                    continue;
+                }
+            }
+            if let Some(pat) = filter.qn_pattern {
+                if !pattern_matches(pat, &hit.qualified_name) {
+                    continue;
+                }
+            }
+            if let Some(pat) = filter.file_pattern {
+                if !pattern_matches(pat, &hit.file_path) {
+                    continue;
+                }
+            }
+            if filter.exclude_entry_points && is_entry_point(&hit) {
+                continue;
+            }
+            if filter.relationship.is_some()
+                || filter.min_degree.is_some()
+                || filter.max_degree.is_some()
+                || filter.include_connected
+            {
+                let degree = self.degree(&hit.qualified_name, filter.relationship)?;
+                if filter.include_connected && degree == 0 {
+                    continue;
+                }
+                if filter.min_degree.is_some_and(|min| degree < min) {
+                    continue;
+                }
+                if filter.max_degree.is_some_and(|max| degree > max) {
+                    continue;
+                }
+            }
+            filtered.push(hit);
+        }
+
+        let limit = filter.limit.max(1);
+        let total = filtered.len();
+        let results = filtered
+            .into_iter()
+            .skip(filter.offset)
+            .take(limit)
+            .collect::<Vec<_>>();
+        let has_more = total > filter.offset.saturating_add(results.len());
+        Ok(SearchGraphPage {
+            results,
+            total,
+            offset: filter.offset,
+            limit,
+            has_more,
+        })
     }
 
     pub fn search_code_files(&self, pattern: &str, limit: usize) -> Result<Vec<String>> {
@@ -258,9 +300,9 @@ impl Store {
                 return Ok(paths);
             }
         }
-        let mut stmt = self.conn.prepare(
-            "SELECT path FROM files WHERE content LIKE ?1 ESCAPE '\\' LIMIT ?2",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path FROM files WHERE content LIKE ?1 ESCAPE '\\' LIMIT ?2")?;
         let like = like_escape(pattern);
         let mut rows = stmt.query(params![like, limit as i64])?;
         let mut out = Vec::new();
@@ -271,9 +313,9 @@ impl Store {
     }
 
     fn search_code_files_fts(&self, query: &str, limit: usize) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT path FROM files_fts WHERE files_fts MATCH ?1 LIMIT ?2",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path FROM files_fts WHERE files_fts MATCH ?1 LIMIT ?2")?;
         let mut rows = stmt.query(params![query, limit as i64])?;
         let mut out = Vec::new();
         while let Some(row) = rows.next()? {
@@ -282,7 +324,11 @@ impl Store {
         Ok(out)
     }
 
-    pub fn search_code_matches(&self, pattern: &str, limit: usize) -> Result<Vec<(String, i64, String)>> {
+    pub fn search_code_matches(
+        &self,
+        pattern: &str,
+        limit: usize,
+    ) -> Result<Vec<(String, i64, String)>> {
         let fts_query = fts_escape(pattern);
         let candidate_paths = self
             .search_code_files_fts(&fts_query, limit.saturating_mul(4).max(20))
@@ -294,7 +340,9 @@ impl Store {
         };
 
         let mut out = Vec::new();
-        let mut stmt = self.conn.prepare("SELECT content FROM files WHERE path = ?1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT content FROM files WHERE path = ?1")?;
         for path in paths {
             let mut rows = stmt.query(params![path])?;
             let Some(row) = rows.next()? else { continue };
@@ -309,6 +357,24 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    fn degree(&self, qualified_name: &str, relationship: Option<&str>) -> Result<i64> {
+        if let Some(rel) = relationship {
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM edges
+                 WHERE edge_type = ?1 AND (src_qn = ?2 OR dst_qn = ?2)",
+                params![rel, qualified_name],
+                |r| r.get(0),
+            )
+        } else {
+            self.conn.query_row(
+                "SELECT COUNT(*) FROM edges WHERE src_qn = ?1 OR dst_qn = ?1",
+                params![qualified_name],
+                |r| r.get(0),
+            )
+        }
+        .map_err(Into::into)
     }
 
     pub fn get_symbol(&self, qualified_name: &str) -> Result<Option<Symbol>> {
@@ -432,10 +498,25 @@ impl Store {
         serde_json::json!({
             "engine": "sqlite",
             "cypher_supported": false,
+            "cbm_compatibility": "v0.1 compatibility layer: CBM table aliases and tool names, read-only SELECT query_graph; full openCypher/tree-sitter parity is roadmap",
             "node_labels": labels.iter().map(|(l, c)| serde_json::json!({ "label": l, "count": c })).collect::<Vec<_>>(),
             "edge_types": edge_types.iter().map(|(t, c)| serde_json::json!({ "type": t, "count": c })).collect::<Vec<_>>(),
-            "tables": ["meta", "files", "symbols", "edges", "symbols_fts"],
-            "notes": "Use search_graph/trace_path. query_graph accepts read-only SELECT on these tables."
+            "tables": {
+                "symbols": ["qualified_name", "name", "label", "file_path", "line_start", "line_end", "signature"],
+                "edges": ["src_qn", "dst_qn", "edge_type"],
+                "files": ["path", "content", "language", "line_count"],
+                "meta": ["key", "value"]
+            },
+            "cbm_table_aliases": {
+                "nodes": "symbols",
+                "relationships": "edges"
+            },
+            "supported_search_graph_filters": [
+                "query", "label", "name_pattern", "qn_pattern", "file_pattern",
+                "relationship", "min_degree", "max_degree", "include_connected",
+                "exclude_entry_points", "limit", "offset"
+            ],
+            "notes": "Use search_graph/trace_path first. query_graph accepts read-only SELECT on symbols/edges/files and aliases nodes/relationships."
         })
     }
 
@@ -452,18 +533,29 @@ impl Store {
     }
 
     pub fn query_graph_sql(&self, query: &str, max_rows: usize) -> Result<Vec<serde_json::Value>> {
-        let upper = query.trim().to_uppercase();
+        let query = query.trim().trim_end_matches(';').trim();
+        if query.contains(';') {
+            return Err(AppError::msg("multiple SQL statements are not allowed"));
+        }
+        let query = rewrite_cbm_aliases(query);
+        let upper = query.to_uppercase();
         if !upper.starts_with("SELECT") {
             return Err(AppError::msg(
                 "v0.1: Cypher not supported. Use read-only SELECT on symbols/edges/files, or search_graph/trace_path.",
             ));
         }
-        for bad in ["INSERT", "UPDATE", "DELETE", "DROP", "ATTACH", "DETACH", "ALTER", "CREATE"] {
-            if upper.contains(bad) {
+        for bad in [
+            "INSERT", "UPDATE", "DELETE", "DROP", "ATTACH", "DETACH", "ALTER", "CREATE", "PRAGMA",
+            "REPLACE", "VACUUM",
+        ] {
+            if contains_sql_keyword(&upper, bad) {
                 return Err(AppError::msg(format!("forbidden keyword in query: {bad}")));
             }
         }
-        let sql = format!("{query} LIMIT {}", max_rows.max(1));
+        let sql = format!(
+            "SELECT * FROM ({query}) AS cbrlm_query LIMIT {}",
+            max_rows.max(1)
+        );
         let mut stmt = self.conn.prepare(&sql)?;
         let col_count = stmt.column_count();
         let col_names: Vec<String> = (0..col_count)
@@ -496,6 +588,60 @@ impl Store {
         }
         Ok(out)
     }
+}
+
+fn pattern_matches(pattern: &str, value: &str) -> bool {
+    let pat = pattern.trim();
+    if pat.is_empty() || pat == ".*" || pat == "*" {
+        return true;
+    }
+    let normalized = pat
+        .replace(".*", "*")
+        .replace('%', "*")
+        .replace(['^', '$'], "")
+        .replace('\\', "");
+    if normalized.contains('*') {
+        glob_match_simple(&normalized, value)
+    } else {
+        value.contains(&normalized)
+    }
+}
+
+fn glob_match_simple(pattern: &str, value: &str) -> bool {
+    let parts = pattern.split('*').filter(|p| !p.is_empty());
+    let mut rest = value;
+    for part in parts {
+        let Some(idx) = rest.find(part) else {
+            return false;
+        };
+        rest = &rest[idx + part.len()..];
+    }
+    true
+}
+
+fn is_entry_point(hit: &SearchHit) -> bool {
+    matches!(hit.name.as_str(), "main" | "__main__" | "init")
+}
+
+fn contains_sql_keyword(upper_sql: &str, keyword: &str) -> bool {
+    upper_sql
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|part| part == keyword)
+}
+
+fn rewrite_cbm_aliases(query: &str) -> String {
+    query
+        .replace("FROM nodes", "FROM symbols")
+        .replace("from nodes", "from symbols")
+        .replace("JOIN nodes", "JOIN symbols")
+        .replace("join nodes", "join symbols")
+        .replace("FROM relationships", "FROM edges")
+        .replace("from relationships", "from edges")
+        .replace("JOIN relationships", "JOIN edges")
+        .replace("join relationships", "join edges")
+        .replace(".type", ".edge_type")
+        .replace(".source", ".src_qn")
+        .replace(".target", ".dst_qn")
 }
 
 fn sqlite_value_to_json(val: rusqlite::types::Value) -> serde_json::Value {

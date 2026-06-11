@@ -1,6 +1,6 @@
 use codebase_rlm_memory_mcp::hooks::extract_token;
 use codebase_rlm_memory_mcp::paths::{default_project_name, project_db_path};
-use codebase_rlm_memory_mcp::store::{project_exists, Store};
+use codebase_rlm_memory_mcp::store::{project_exists, SearchGraphFilter, Store};
 use tempfile::TempDir;
 
 #[test]
@@ -22,11 +22,15 @@ fn hook_augment_query_finds_indexed_symbols() {
     assert!(project_exists(&project));
 
     let pattern = format!("%{}%", "handleAuth");
-    let hits = store
-        .search_graph(None, Some(&pattern), None, 5)
+    let page = store
+        .search_graph(SearchGraphFilter {
+            name_pattern: Some(&pattern),
+            limit: 5,
+            ..SearchGraphFilter::default()
+        })
         .unwrap();
-    assert_eq!(hits.len(), 1);
-    assert_eq!(hits[0].name, "handleAuth");
+    assert_eq!(page.results.len(), 1);
+    assert_eq!(page.results[0].name, "handleAuth");
     assert!(project_db_path(&project).exists());
 }
 

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 
 use crate::paths::default_project_name;
-use crate::store::{project_exists, Store};
+use crate::store::{project_exists, SearchGraphFilter, Store};
 
 const STDIN_CAP: usize = 256 * 1024;
 const MIN_TOKEN: usize = 4;
@@ -189,8 +189,12 @@ fn query_project(dir: &Path, token: &str) -> QueryOutcome {
         Err(_) => return QueryOutcome::Error,
     };
     let pattern = format!("%{token}%");
-    let hits = match store.search_graph(None, Some(&pattern), None, RESULT_LIMIT) {
-        Ok(h) => h,
+    let hits = match store.search_graph(SearchGraphFilter {
+        name_pattern: Some(&pattern),
+        limit: RESULT_LIMIT,
+        ..SearchGraphFilter::default()
+    }) {
+        Ok(page) => page.results,
         Err(_) => return QueryOutcome::Error,
     };
     if hits.is_empty() {
