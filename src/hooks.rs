@@ -42,9 +42,101 @@ pub const HOOK_SESSION_SCRIPT: &str = "cbrlm-session-reminder";
 pub const HOOK_MATCHER: &str = "Grep|Glob";
 pub const HOOK_TIMEOUT_SEC: i64 = 5;
 
-/// Print SessionStart reminder to stdout.
+/// Print SessionStart reminder with auto-detected project architecture to stdout.
+/// Detects the current working directory, resolves the project name,
+/// and if indexed, outputs architecture summary + top files + symbol distribution.
 pub fn hook_session_start() -> i32 {
-    print!("{SESSION_REMINDER}");
+    let cwd = match std::env::current_dir() {
+        Ok(p) => p,
+        Err(_) => {
+            print!("{SESSION_REMINDER}");
+            return 0;
+        }
+    };
+
+    let project = crate::paths::default_project_name(&cwd);
+
+    if !project_exists(&project) {
+        // Project not indexed — output reminder + suggestion
+        print!(
+            "{}\n\n\
+             ⚠ Project \"{}\" is not indexed yet.\n\
+             Run `index_repository` via MCP to build the knowledge graph:\n\
+               index_repository(repo_path=\"{}\")\n\
+             This will enable graph-powered code discovery.",
+            SESSION_REMINDER,
+            project,
+            cwd.to_string_lossy().replace('\\', "/")
+        );
+        return 0;
+    }
+
+    let store = match Store::open(&project) {
+        Ok(s) => s,
+        Err(_) => {
+            print!("{SESSION_REMINDER}");
+            return 0;
+        }
+    };
+
+    let summary = match store.summary() {
+        Ok(s) => s,
+        Err(_) => {
+            print!("{SESSION_REMINDER}");
+            return 0;
+        }
+    };
+
+    let labels = store.list_symbol_labels().unwrap_or_default();
+    let top_files = store.top_packages(8).unwrap_or_default();
+
+    let labels_str: String = labels
+        .iter()
+        .map(|(l, c)| format!("  {l}: {c}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let files_str: String = top_files
+        .iter()
+        .map(|(f, c)| format!("  {f}  ({c} symbols)"))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let output = format!(
+        "<cbrlm_architecture project=\"{project}\">
+📊 Knowledge Graph Summary
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  Repository: {repo}
+  Files indexed: {files}
+  Symbols indexed: {symbols}
+  Relationships: {edges}
+  Indexed at: {indexed_at}
+
+📂 Top files by symbol count:
+{files_str}
+
+🏷️  Symbol distribution:
+{labels_str}
+
+💡 Usage:
+  • search_graph(project=\"{project}\", query=...)  - Find symbols
+  • trace_path(project=\"{project}\", ...)          - Trace call chains  
+  • rlm_read_symbol(project=\"{project}\", qn=...)  - Read symbol source
+  • rlm_filter(project=\"{project}\", ...)          - Filter by label/name
+</cbrlm_architecture>
+
+{SESSION_REMINDER}",
+        project = summary.project,
+        repo = summary.repo_path,
+        files = summary.files_indexed,
+        symbols = summary.symbols_indexed,
+        edges = summary.edges_indexed,
+        indexed_at = summary.indexed_at,
+        files_str = files_str,
+        labels_str = labels_str,
+    );
+
+    print!("{output}");
     0
 }
 
